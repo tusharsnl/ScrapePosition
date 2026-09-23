@@ -1,0 +1,54 @@
+name: Hourly ShipFinder Vessel Position Tracker
+
+on:
+  schedule:
+    # Runs at the top of every hour (UTC). GitHub may delay this by a few
+    # minutes during high load; exact-minute timing is not guaranteed.
+    - cron: "0 * * * *"
+  workflow_dispatch: {}  # allows manually triggering a run from the Actions tab
+
+# Avoid overlapping runs stepping on each other's CSV commit.
+concurrency:
+  group: shipfinder-vessel-position-tracker
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to commit the updated CSV back to the repo
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Chromium (with OS dependencies)
+        run: python -m playwright install --with-deps chromium
+
+      - name: Fetch vessel positions
+        run: |
+          python shipfinder_vessel_position.py "WAN HAI 517" --headless --output vessel_positions.csv || \
+          python shipfinder_vessel_position.py "WAN HAI 517" --headless --output vessel_positions.csv || true
+          python shipfinder_vessel_position.py "9400186" --headless --output vessel_positions.csv || \
+          python shipfinder_vessel_position.py "9400186" --headless --output vessel_positions.csv || true
+
+      - name: Commit and push updated CSV
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add vessel_positions.csv
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Update vessel positions [skip ci] $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
