@@ -36,6 +36,11 @@ jobs:
 
       - name: Fetch vessel positions
         run: |
+          # Snapshot the CSV as it existed at checkout time, so we can later
+          # compute exactly which rows this run added (independent of what
+          # other concurrent runs may commit in the meantime).
+          cp vessel_positions.csv /tmp/vessel_positions.before.csv
+
           fetch() {
             python shipfinder_vessel_position.py "$1" --headless --output vessel_positions.csv || \
             python shipfinder_vessel_position.py "$1" --headless --output vessel_positions.csv || true
@@ -52,10 +57,31 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add vessel_positions.csv
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -m "Update vessel positions [skip ci] $(date -u '+%Y-%m-%d %H:%M UTC')"
-            git push
+
+          # Rows this run added, regardless of what else may have changed
+          # the file remotely in the meantime.
+          NEW_ROWS_FILE=/tmp/vessel_positions.new_rows.csv
+          comm -13 <(sort /tmp/vessel_positions.before.csv) <(sort vessel_positions.csv) > "$NEW_ROWS_FILE" || true
+
+          if [ ! -s "$NEW_ROWS_FILE" ]; then
+            echo "No new rows fetched this run; nothing to commit."
+            exit 0
           fi
+
+          # Another concurrent/overlapping run (e.g. a manual trigger racing
+          # the scheduled one) may push in the meantime. Re-fetch the latest
+          # remote CSV and re-append just this run's new rows before each
+          # retry, instead of failing outright on a rejected push.
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git checkout origin/main -- vessel_positions.csv
+            cat "$NEW_ROWS_FILE" >> vessel_positions.csv
+            git add vessel_positions.csv
+            git commit -m "Update vessel positions [skip ci] $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push origin HEAD:main && { echo "Push succeeded on attempt $attempt."; exit 0; }
+            echo "Push failed (attempt $attempt), retrying..."
+            git reset --hard origin/main
+            sleep $((attempt * 5))
+          done
+          echo "Push failed after multiple attempts." >&2
+          exit 1
