@@ -2,12 +2,11 @@ name: Hourly ShipFinder Vessel Position Tracker
 
 on:
   schedule:
-    # Runs 7 minutes past every hour (UTC). Avoid the exact top-of-hour
-    # (":00") minute, since it is the most congested slot on GitHub's
-    # scheduler and scheduled runs are more likely to be delayed or
-    # silently dropped there. GitHub may still delay this by a few
-    # minutes during high load; exact-minute timing is not guaranteed.
-    - cron: "7 * * * *"
+    # Runs every 10 minutes (UTC) for easier schedule testing while still
+    # avoiding reliance on the exact top-of-hour. GitHub may still delay
+    # this by a few minutes during high load; exact-minute timing is not
+    # guaranteed.
+    - cron: "*/10 * * * *"
   workflow_dispatch: {}  # allows manually triggering a run from the Actions tab
 
 # Avoid overlapping runs stepping on each other's CSV commit.
