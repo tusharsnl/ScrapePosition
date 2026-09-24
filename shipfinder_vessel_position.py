@@ -1,16 +1,18 @@
 """ShipFinder vessel position tracker.
 
-Given a vessel name (e.g. "WAN HAI 517"), this script:
+Given a vessel name (e.g. "WAN HAI 517") or IMO number, this script:
   1. Loads https://www.shipfinder.com/
-  2. Types the vessel name into the search box and picks the first
-     autocomplete result.
+  2. Types the search term into the search box. Multiple candidate results
+     often come back for the same name (some real, some stale/decoy entries
+     with no IMO number) — the script picks the matching result that has a
+     genuine IMO number, falling back to the first result if none do.
   3. Reads the "Coastal AIS" info panel that appears (MMSI, Lat, Lon,
      Speed, Course, Status, Destination, ETA, Last Update, etc.).
   4. Appends a row with a timestamp + lat/lon (+ the other fields) to a
      CSV file, creating it with a header the first time it's run.
 
-Designed to be run on a schedule (e.g. hourly via cron) so the CSV builds
-up a position history for the vessel over time.
+Designed to be run on a schedule (e.g. hourly via cron or GitHub Actions) so
+the CSV builds up a position history for the vessel over time.
 
 Usage:
     python shipfinder_vessel_position.py "WAN HAI 517"
@@ -159,11 +161,12 @@ def get_vessel_position(
     vessel_name: str,
     headless: bool = True,
     timeout_ms: int = 30000,
-    result_type: str = "Cargo ship",
 ) -> VesselPosition:
-    """Search ShipFinder for `vessel_name`, close the welcome popup, open the
-    search result matching `result_type` (default: "Cargo ship"), and read
-    its current position from the Coastal AIS info panel."""
+    """Search ShipFinder for `vessel_name`, close the welcome popup, and open
+    the matching search result that has a real IMO number (ShipFinder often
+    also returns decoy/stale entries for the same name with no IMO — these
+    resolve to an empty info panel and are skipped). Then read the vessel's
+    current position from the Coastal AIS info panel."""
     vessel_name = vessel_name.strip()
     if not vessel_name:
         raise ShipFinderError("Vessel name must not be empty.")
@@ -194,22 +197,61 @@ def get_vessel_position(
             search_box.wait_for(state="visible", timeout=timeout_ms)
             search_box.fill(vessel_name)
 
-            results = page.locator("ul li a")
+            results = page.locator("ul li a.ship_ico")
             try:
-                results.first.wait_for(state="visible", timeout=timeout_ms)
+                results.first.wait_for(state="attached", timeout=timeout_ms)
             except PlaywrightTimeoutError as exc:
                 raise ShipFinderError(
                     f"No search results found for vessel '{vessel_name}'."
                 ) from exc
 
-            # ShipFinder returns multiple AIS records for the same vessel
-            # (e.g. one tagged "Container", one tagged "Cargo ship"). Select
-            # the result whose label matches `result_type` (default:
-            # "Cargo ship", per the requested search flow).
-            target_result = page.locator("ul li a", has_text=result_type).first
-            if target_result.count() == 0:
-                target_result = results.first
-            target_result.click(force=True)
+            # ShipFinder often returns several AIS records for the same
+            # vessel name/IMO — real ones (data-kv="IMO：<number>") plus
+            # decoy/stale entries that show no IMO at all
+            # (data-kv="MMSI：<number>") and resolve to an empty/"-" info
+            # panel. Wait briefly for the full result set to populate, then
+            # pick the first entry whose data-kv contains a real IMO number
+            # and whose data-name matches the search term; fall back to the
+            # very first result if no such match is found.
+            page.wait_for_timeout(1200)
+            target_mmsi = page.evaluate(
+                """
+                (vesselName) => {
+                    const norm = s => (s || '').trim().toUpperCase();
+                    const wanted = norm(vesselName);
+                    const links = Array.from(document.querySelectorAll('ul li a.ship_ico'));
+                    const withImo = links.filter(a => {
+                        const kv = a.getAttribute('data-kv') || '';
+                        const name = norm(a.getAttribute('data-name'));
+                        return /IMO：\\d+/.test(kv) && name === wanted;
+                    });
+                    if (withImo.length > 0) return withImo[0].getAttribute('mmsi');
+                    if (links.length > 0) return links[0].getAttribute('mmsi');
+                    return null;
+                }
+                """,
+                vessel_name,
+            )
+            if not target_mmsi:
+                raise ShipFinderError(
+                    f"No search results found for vessel '{vessel_name}'."
+                )
+
+            clicked = page.evaluate(
+                """
+                (mmsi) => {
+                    const el = document.querySelector(`ul li a.ship_ico[mmsi="${mmsi}"]`);
+                    if (!el) return false;
+                    el.click();
+                    return true;
+                }
+                """,
+                target_mmsi,
+            )
+            if not clicked:
+                raise ShipFinderError(
+                    f"Could not select a search result for vessel '{vessel_name}'."
+                )
 
             # Wait for the Coastal AIS info panel's table to render. This
             # table lives inside a link to /ship/detail/mmsi/<mmsi> — using
@@ -270,17 +312,10 @@ def _cli() -> None:
     )
     parser.add_argument("--headless", action="store_true", default=True, help="Run headless (default).")
     parser.add_argument("--no-headless", dest="headless", action="store_false", help="Run with a visible browser.")
-    parser.add_argument(
-        "--result-type",
-        default="Cargo ship",
-        help='Which labeled search result to open, e.g. "Cargo ship" (default) or "Container".',
-    )
     args = parser.parse_args()
 
     try:
-        position = get_vessel_position(
-            args.vessel_name, headless=args.headless, result_type=args.result_type
-        )
+        position = get_vessel_position(args.vessel_name, headless=args.headless)
     except ShipFinderError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)

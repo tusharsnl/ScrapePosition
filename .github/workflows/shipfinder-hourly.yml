@@ -36,10 +36,17 @@ jobs:
 
       - name: Fetch vessel positions
         run: |
-          python shipfinder_vessel_position.py "WAN HAI 517" --headless --output vessel_positions.csv || \
-          python shipfinder_vessel_position.py "WAN HAI 517" --headless --output vessel_positions.csv || true
-          python shipfinder_vessel_position.py "9400186" --headless --output vessel_positions.csv || \
-          python shipfinder_vessel_position.py "9400186" --headless --output vessel_positions.csv || true
+          fetch() {
+            python shipfinder_vessel_position.py "$1" --headless --output vessel_positions.csv || \
+            python shipfinder_vessel_position.py "$1" --headless --output vessel_positions.csv || true
+          }
+          fetch "WAN HAI 517"
+          fetch "9400186"
+          fetch "REN JIAN 19"
+          fetch "MSC DITTE"
+          fetch "EVER LEARNED"
+          fetch "HAIAN EAST"
+          fetch "ITAL USODIMARE"
 
       - name: Commit and push updated CSV
         run: |

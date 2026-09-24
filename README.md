@@ -14,12 +14,24 @@ the updated CSV straight back into this repository.
 Currently configured (see the `Fetch vessel positions` step in
 [`.github/workflows/shipfinder-hourly.yml`](.github/workflows/shipfinder-hourly.yml)):
 
-- `WAN HAI 517` (searched by name, "Cargo ship" result selected)
+- `WAN HAI 517`
 - `9400186` (searched by IMO number)
+- `REN JIAN 19`
+- `MSC DITTE`
+- `EVER LEARNED`
+- `HAIAN EAST`
+- `ITAL USODIMARE`
 
-To add or remove vessels, edit that step and add another
-`python shipfinder_vessel_position.py "<name-or-IMO>" --headless --output vessel_positions.csv`
-line.
+To add or remove vessels, edit that step's `fetch "<name-or-IMO>"` lines.
+
+### How the correct vessel result is selected
+
+A single vessel-name search on ShipFinder often returns multiple candidate
+results — some real, some stale/decoy AIS entries for the same name that
+have no IMO number and resolve to an empty info panel. The script picks the
+result matching the search name that has a genuine IMO number, and falls
+back to the first result if none do. This was verified against all vessels
+listed above.
 
 ## How it works
 
