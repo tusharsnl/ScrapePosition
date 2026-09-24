@@ -1,1 +1,3 @@
 captured_at_utc,vessel_name,mmsi,imo,call_sign,ship_type,status,latitude,longitude,latitude_decimal,longitude_decimal,speed_kn,course_deg,heading_deg,destination,eta,last_update
+2026-09-24 05:59:49,WAN HAI 517,850532656,9457660,9V7583,Container,Under way using engine,22-14.609N,114-07.918E,22.243483,114.131967,12.5kn,315.4Deg,315.0Deg,"HONG KONG, CN",2018-08-08 06:00:00,2025-02-26 17:19:27
+2026-09-24 05:59:56,9400186,563123500,9400186,9V3760,Container,Under way using engine,5-28.675N,106-42.612E,5.477917,106.7102,0.8kn,91.3Deg,Unknown,CNSHK>SGSIN WBGB,2026-09-26 17:00:00,2026-09-24 05:27:44
