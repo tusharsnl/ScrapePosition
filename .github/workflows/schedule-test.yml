@@ -1,0 +1,37 @@
+name: Schedule Test (every 2 minutes)
+
+# Minimal workflow with no dependencies, just to verify whether GitHub's
+# schedule trigger fires at all for this repository. Appends a timestamped
+# line to schedule_test_log.txt and commits it, so successful scheduled
+# runs are visible directly in the file's history.
+
+on:
+  schedule:
+    - cron: "*/2 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  log-run:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Log run
+        run: |
+          echo "Triggered by: ${{ github.event_name }} at $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> schedule_test_log.txt
+
+      - name: Commit and push log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add schedule_test_log.txt
+          git commit -m "Schedule test run [skip ci] $(date -u '+%Y-%m-%d %H:%M UTC')"
+          for attempt in 1 2 3; do
+            git push && exit 0
+            git fetch origin main
+            git rebase origin/main || { git rebase --abort; git reset --soft origin/main; git add schedule_test_log.txt; git commit -m "Schedule test run [skip ci] $(date -u '+%Y-%m-%d %H:%M UTC')"; }
+            sleep 5
+          done
