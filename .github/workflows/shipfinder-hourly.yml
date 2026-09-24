@@ -7,7 +7,7 @@ on:
     # scheduler and scheduled runs are more likely to be delayed or
     # silently dropped there. GitHub may still delay this by a few
     # minutes during high load; exact-minute timing is not guaranteed.
-    - cron: "7 * * * *"
+    - cron: "*/20 * * * *"
   workflow_dispatch: {}  # allows manually triggering a run from the Actions tab
 
 # Avoid overlapping runs stepping on each other's CSV commit.
