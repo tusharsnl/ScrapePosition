@@ -1,94 +1,91 @@
 # ShipFinder Vessel Position Tracker
 
-Tracks the current position (latitude/longitude, speed, course, destination,
-etc.) of one or more vessels on [ShipFinder](https://www.shipfinder.com/) and
-appends the results to `vessel_positions.csv`, building up a position history
-over time.
+This repository scrapes the vessels currently assigned to active orders in
+OrangeTechShippingWeb, sends each new position to the website over HTTPS, and
+keeps a CSV history in this repository. It uses the existing GitHub Actions
+runner; it does not require a separate Azure job, container registry, or direct
+GitHub-to-SQL connection.
 
-Runs automatically **every hour via GitHub Actions** — no local machine or
-server needs to stay on. GitHub's own runners execute the script and commit
-the updated CSV straight back into this repository.
+## Workflow
 
-## What it tracks
+The `Vessel Position Tracker` workflow runs every two hours (UTC), or manually
+from the GitHub **Actions** tab. It:
 
-Currently configured (see the `Fetch vessel positions` step in
-[`.github/workflows/shipfinder-hourly.yml`](.github/workflows/shipfinder-hourly.yml)):
+1. Calls `GET <VESSEL_SYNC_API_URL>?action=vessels` with the
+   `X-Vessel-Sync-Key` header to get the distinct vessels that still need
+   tracking.
+2. Scrapes each returned vessel using `shipfinder_vessel_position.py`, retrying
+   once and reporting any vessel that still fails.
+3. POSTs only rows appended during that run to the website endpoint. The
+   website inserts the positions into `dbo.Mst_VesselPositionData` and updates
+   order arrival tracking. The order map already reads the position table.
+4. Commits the updated CSV using the repository's built-in Actions token.
 
-- `WAN HAI 517`
-- `9400186` (searched by IMO number)
-- `REN JIAN 19`
-- `MSC DITTE`
-- `EVER LEARNED`
-- `HAIAN EAST`
-- `ITAL USODIMARE`
+Orders are considered active until `DeliverStatus` is `Delivered`. The website
+stops requesting a vessel for an order after two observations, at least 90
+minutes apart and within 10 nautical miles of the destination. A vessel
+assigned to another active order that still needs tracking remains on the
+requested list.
 
-To add or remove vessels, edit that step's `fetch "<name-or-IMO>"` lines.
+## Configure GitHub Actions
 
-### How the correct vessel result is selected
+In the scraper repository's **Settings → Secrets and variables → Actions**:
 
-A single vessel-name search on ShipFinder often returns multiple candidate
-results — some real, some stale/decoy AIS entries for the same name that
-have no IMO number and resolve to an empty info panel. The script picks the
-result matching the search name that has a genuine IMO number, and falls
-back to the first result if none do. This was verified against all vessels
-listed above.
+1. Add repository variable `VESSEL_SYNC_API_URL`, set to the HTTPS endpoint,
+   for example `https://YOUR-APP.azurewebsites.net/VesselPositionSync.ashx`.
+2. Add repository secret `VESSEL_SYNC_API_KEY`. Its value must exactly match
+   the App Service application setting `VesselSyncApiKey`.
+3. Under **Settings → Actions → General → Workflow permissions**, allow read
+   and write access so the workflow can commit `vessel_positions.csv`.
+4. Run **Actions → Vessel Position Tracker → Run workflow** and inspect the
+   logs. The workflow fails if it cannot sync with the site or if a vessel
+   still fails after its retry.
 
-## How it works
+Only `shipfinder-hourly.yml` has a scheduled trigger. The duplicate `main.yml`
+and the schedule-test workflow have manual dispatch only, to prevent duplicate
+scrapes and unnecessary Actions usage.
 
-1. **`schedule: cron: "0 * * * *"`** triggers the workflow at the top of every
-   hour (UTC). You can also trigger a run manually from the **Actions** tab
-   ("Run workflow" button), since the workflow also listens for
-   `workflow_dispatch`.
-2. GitHub spins up a fresh Ubuntu runner, installs Python + Playwright +
-   Chromium, and runs `shipfinder_vessel_position.py` once per tracked
-   vessel — each run appends a row to `vessel_positions.csv`.
-3. The workflow then commits and pushes the updated CSV back to this repo
-   (using the built-in `GITHUB_TOKEN`, no extra secrets needed), so the data
-   persists between runs even though each run's VM is thrown away afterward.
+## Website and database prerequisites
 
-## Setting this up in your own GitHub repo
+In Azure App Service, enable **HTTPS Only** and add application setting
+`VesselSyncApiKey` with a long random value. Store the same value only as the
+GitHub Actions secret above; do not put it in source control or in the CSV.
+The site also needs its existing SQL connection setting named `con` and access
+to the database tables.
 
-```bash
-cd "ShipFinder Vessel Tracker"
-git init
-git add .
-git commit -m "Initial commit: ShipFinder hourly vessel tracker"
-git branch -M main
-git remote add origin https://github.com/<your-username>/<your-repo>.git
-git push -u origin main
+Apply these migrations to the website's Azure SQL database if they have not
+already been applied:
+
+- `Database/Migrations/20261020_AddVesselPositionData.sql`
+- `Database/Migrations/20261025_AddCustomerOrderVesselTracking.sql`
+
+The endpoint uses the website's existing SQL connection configuration; the
+GitHub runner never receives database credentials or connects to SQL directly.
+
+## Run locally
+
+Install Python 3.12 and the scraper dependencies:
+
+```powershell
+python -m pip install -r requirements.txt
+python -m playwright install chromium
 ```
 
-Then, in your repo on GitHub:
+Set `VESSEL_SYNC_API_URL` and `VESSEL_SYNC_API_KEY` in the local process
+environment without committing them, then run:
 
-1. Go to **Settings → Actions → General → Workflow permissions** and select
-   **"Read and write permissions"** (required so the workflow can push the
-   updated CSV back to the repo).
-2. Go to the **Actions** tab — you should see "Hourly ShipFinder Vessel
-   Position Tracker" listed. Click **Run workflow** to trigger it manually
-   and confirm it works end-to-end before waiting for the first scheduled run.
-3. After that, it will run automatically every hour, and `vessel_positions.csv`
-   will grow with a new row per tracked vessel each hour.
-
-## Known limitations
-
-- **Cron delay**: GitHub's `schedule` trigger is best-effort and can be
-  delayed several minutes during periods of high platform load — it is not
-  guaranteed to fire at exactly :00 every hour.
-- **60-day auto-disable**: GitHub automatically disables scheduled workflows
-  in a repository that has had no other activity (commits, etc.) for 60
-  days. A manual re-enable (or any commit) resets this.
-- **Occasional fetch failures**: ShipFinder's info panel can occasionally be
-  slow to render, causing a single fetch to fail. The workflow retries each
-  vessel once before giving up for that hour; a missed hour just means a
-  small gap in the CSV, not a broken workflow run.
-- **Data format**: latitude/longitude are stored both as ShipFinder's native
-  degrees-minutes strings (e.g. `22-14.609N`) and as converted signed decimal
-  degrees (e.g. `22.243483`) for easier charting/mapping.
-
-## Running it locally (optional)
-
-```bash
-pip install -r requirements.txt
-playwright install chromium
+```powershell
+python sync_vessel_positions.py vessels
 python shipfinder_vessel_position.py "WAN HAI 517" --headless --output vessel_positions.csv
 ```
+
+The CSV contains a historical record of scraped positions. The site database
+is the data source used by the order map; committing the CSV alone does not
+update the website.
+
+## Limitations
+
+- GitHub scheduled workflows are best-effort, run in UTC, and can be delayed.
+- Scheduled workflows may be disabled after prolonged repository inactivity.
+- ShipFinder can change its site or selectors; review workflow logs if scraping
+  starts failing.

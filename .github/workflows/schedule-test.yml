@@ -1,13 +1,8 @@
-name: Schedule Test (every 2 minutes)
+name: Manual Schedule Test
 
-# Minimal workflow with no dependencies, just to verify whether GitHub's
-# schedule trigger fires at all for this repository. Appends a timestamped
-# line to schedule_test_log.txt and commits it, so successful scheduled
-# runs are visible directly in the file's history.
+# Manually appends a timestamped line to schedule_test_log.txt.
 
 on:
-  schedule:
-    - cron: "*/2 * * * *"
   workflow_dispatch: {}
 
 jobs:
