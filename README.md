@@ -21,6 +21,12 @@ from the GitHub **Actions** tab. It:
    order arrival tracking. The order map already reads the position table.
 4. Commits the updated CSV using the repository's built-in Actions token.
 
+Website calls wait up to 120 seconds and are retried up to three times (after
+15 and 45 seconds) on timeouts, connection errors, and HTTP 500/502/503/504.
+The free-tier App Service and the auto-pausing serverless database can take
+about a minute to wake up after an idle period. Re-posting a batch is safe
+because the website skips positions it has already stored.
+
 Orders are considered active until `DeliverStatus` is `Delivered`. The website
 stops requesting a vessel for an order after two observations, at least 90
 minutes apart and within 10 nautical miles of the destination. A vessel

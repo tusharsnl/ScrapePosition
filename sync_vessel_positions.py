@@ -7,6 +7,7 @@ import csv
 import json
 import os
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -33,6 +34,10 @@ CSV_FIELDS = [
     "last_update",
 ]
 MAX_POSITIONS_PER_REQUEST = 500
+REQUEST_TIMEOUT_SECONDS = 120
+REQUEST_ATTEMPTS = 3
+RETRY_DELAYS_SECONDS = (15, 45)
+RETRYABLE_HTTP_STATUSES = {500, 502, 503, 504}
 
 
 def _configuration() -> tuple[str, str]:
@@ -58,15 +63,34 @@ def _request(url: str, api_key: str, data: bytes | None = None) -> bytes:
     headers = {"X-Vessel-Sync-Key": api_key}
     if data is not None:
         headers["Content-Type"] = "application/json; charset=utf-8"
-    request = Request(url, data=data, headers=headers, method="POST" if data is not None else "GET")
-    try:
-        with urlopen(request, timeout=45) as response:
-            return response.read()
-    except HTTPError as error:
-        body = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Sync endpoint returned HTTP {error.code}: {body}") from error
-    except URLError as error:
-        raise RuntimeError(f"Could not reach the vessel sync endpoint: {error.reason}") from error
+    method = "POST" if data is not None else "GET"
+    # The free-tier website and database can take over a minute to wake up, so
+    # transient failures are retried. Re-posting a batch is safe because the
+    # endpoint skips positions it has already stored.
+    for attempt in range(1, REQUEST_ATTEMPTS + 1):
+        request = Request(url, data=data, headers=headers, method=method)
+        try:
+            with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+                return response.read()
+        except HTTPError as error:
+            body = error.read().decode("utf-8", errors="replace")
+            failure = RuntimeError(f"Sync endpoint returned HTTP {error.code}: {body}")
+            if error.code not in RETRYABLE_HTTP_STATUSES:
+                raise failure from error
+        except URLError as error:
+            failure = RuntimeError(f"Could not reach the vessel sync endpoint: {error.reason}")
+        except (TimeoutError, ConnectionError) as error:
+            failure = RuntimeError(f"Sync endpoint request failed: {error}")
+
+        if attempt == REQUEST_ATTEMPTS:
+            raise failure
+        delay = RETRY_DELAYS_SECONDS[attempt - 1]
+        print(
+            f"{method} attempt {attempt} of {REQUEST_ATTEMPTS} failed ({failure}); retrying in {delay} s.",
+            file=sys.stderr,
+        )
+        time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 def _read_rows(csv_path: Path) -> list[dict[str, str]]:
