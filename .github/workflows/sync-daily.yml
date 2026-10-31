@@ -1,0 +1,81 @@
+name: Daily Vessel Position Sync
+
+on:
+  schedule:
+    - cron: "30 2 * * *"  # 08:00 IST daily, offset from the even-hour scrape runs
+  workflow_dispatch: {}
+
+# Only one sync at a time; it updates the vessel list cache and sync marker.
+concurrency:
+  group: shipfinder-vessel-position-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to commit the vessel list cache and sync marker
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed to rebuild the CSV as of the last synced commit
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync new positions and refresh the vessel list
+        env:
+          VESSEL_SYNC_API_URL: ${{ vars.VESSEL_SYNC_API_URL }}
+          VESSEL_SYNC_API_KEY: ${{ secrets.VESSEL_SYNC_API_KEY }}
+        run: |
+          # Rebuild the CSV as it was at the last successful sync. If the
+          # marker is missing or unusable, post every row instead; that is
+          # safe because the website skips positions it has already stored.
+          BEFORE=/tmp/vessel_positions.before.csv
+          if [ -s last_synced_commit.txt ] && \
+             git cat-file -e "$(cat last_synced_commit.txt):vessel_positions.csv" 2>/dev/null; then
+            git show "$(cat last_synced_commit.txt):vessel_positions.csv" > "$BEFORE"
+          else
+            echo "No usable sync marker; posting all rows (the endpoint dedupes)." >&2
+            head -n 1 vessel_positions.csv > "$BEFORE"
+          fi
+
+          synced_commit=$(git rev-parse HEAD)
+          python sync_vessel_positions.py post-new --before "$BEFORE"
+
+          # Refresh the vessel list cache used by the two-hourly scrape runs.
+          # An empty list is valid: it means no vessel currently needs tracking.
+          python sync_vessel_positions.py vessels > /tmp/required_vessels.new
+          echo "$synced_commit" > /tmp/last_synced_commit.new
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Scrape runs may push new CSV rows while this job is running, so
+          # rebuild this small metadata commit on the latest main before each
+          # push attempt.
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            cp /tmp/required_vessels.new required_vessels.txt
+            cp /tmp/last_synced_commit.new last_synced_commit.txt
+            git add required_vessels.txt last_synced_commit.txt
+            if git diff --cached --quiet; then
+              echo "Vessel list and sync marker are already up to date."
+              break
+            fi
+            git commit -m "Refresh vessel list and sync marker [skip ci] $(date -u '+%Y-%m-%d %H:%M UTC')"
+            if git push origin HEAD:main; then
+              echo "Sync metadata push succeeded on attempt $attempt."
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "Sync metadata push failed after multiple attempts." >&2
+              exit 1
+            fi
+            echo "Sync metadata push failed (attempt $attempt), retrying..."
+            sleep $((attempt * 5))
+          done

@@ -6,20 +6,38 @@ keeps a CSV history in this repository. It uses the existing GitHub Actions
 runner; it does not require a separate Azure job, container registry, or direct
 GitHub-to-SQL connection.
 
-## Workflow
+## Workflows
+
+Scraping and website synchronization are split into two workflows so the
+auto-pausing serverless database is only woken once a day instead of every
+two hours.
 
 The `Vessel Position Tracker` workflow runs every two hours (UTC), or manually
-from the GitHub **Actions** tab. It:
+from the GitHub **Actions** tab. It makes no website or database calls. It:
 
-1. Calls `GET <VESSEL_SYNC_API_URL>?action=vessels` with the
-   `X-Vessel-Sync-Key` header to get the distinct vessels that still need
-   tracking.
-2. Scrapes each returned vessel using `shipfinder_vessel_position.py`, retrying
+1. Reads the vessels to track from `required_vessels.txt`, the list cached in
+   this repository by the daily sync workflow. If the file is empty, no vessel
+   currently needs tracking and the run exits successfully.
+2. Scrapes each listed vessel using `shipfinder_vessel_position.py`, retrying
    once and reporting any vessel that still fails.
-3. POSTs only rows appended during that run to the website endpoint. The
-   website inserts the positions into `dbo.Mst_VesselPositionData` and updates
-   order arrival tracking. The order map already reads the position table.
-4. Commits the updated CSV using the repository's built-in Actions token.
+3. Commits the updated CSV using the repository's built-in Actions token.
+
+The `Daily Vessel Position Sync` workflow runs once a day at 02:30 UTC
+(08:00 IST), or manually from the **Actions** tab. It:
+
+1. POSTs the CSV rows appended since the last successful sync to the website
+   endpoint. The website inserts the positions into
+   `dbo.Mst_VesselPositionData` and updates order arrival tracking; the order
+   map already reads the position table. The last synced state is tracked via
+   the commit recorded in `last_synced_commit.txt`; if the marker is missing,
+   all rows are posted and the website skips duplicates.
+2. Calls `GET <VESSEL_SYNC_API_URL>?action=vessels` with the
+   `X-Vessel-Sync-Key` header and refreshes `required_vessels.txt` with the
+   distinct vessels that still need tracking.
+3. Commits the refreshed vessel list and sync marker.
+
+Positions therefore reach the website up to a day after they are scraped; the
+CSV in this repository still has the full two-hourly history.
 
 Website calls wait up to 120 seconds and are retried up to three times (after
 15 and 45 seconds) on timeouts, connection errors, and HTTP 500/502/503/504.
@@ -43,12 +61,14 @@ In the scraper repository's **Settings → Secrets and variables → Actions**:
    the App Service application setting `VesselSyncApiKey`.
 3. Under **Settings → Actions → General → Workflow permissions**, allow read
    and write access so the workflow can commit `vessel_positions.csv`.
-4. Run **Actions → Vessel Position Tracker → Run workflow** and inspect the
-   logs. The workflow fails if it cannot sync with the site or if a vessel
+4. Run **Actions → Daily Vessel Position Sync → Run workflow** and inspect the
+   logs; it fails if it cannot reach the site. Then run
+   **Actions → Vessel Position Tracker → Run workflow**; it fails if a vessel
    still fails after its retry.
 
-Only `shipfinder-hourly.yml` has a scheduled trigger. The duplicate `main.yml`
-and the schedule-test workflow have manual dispatch only, to prevent duplicate
+Only `shipfinder-hourly.yml` (scrape, every two hours) and `sync-daily.yml`
+(website sync, daily) have scheduled triggers. The duplicate `main.yml` and
+the schedule-test workflow have manual dispatch only, to prevent duplicate
 scrapes and unnecessary Actions usage.
 
 ## Website and database prerequisites

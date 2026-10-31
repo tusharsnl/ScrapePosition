@@ -32,13 +32,21 @@ jobs:
       - name: Install Chromium (with OS dependencies)
         run: python -m playwright install --with-deps chromium
 
-      - name: Fetch active vessel positions and synchronize with the website
-        env:
-          VESSEL_SYNC_API_URL: ${{ vars.VESSEL_SYNC_API_URL }}
-          VESSEL_SYNC_API_KEY: ${{ secrets.VESSEL_SYNC_API_KEY }}
+      - name: Fetch active vessel positions
         run: |
+          # The vessel list is cached in the repository by the Daily Vessel
+          # Position Sync workflow, so scrape runs never call the website API
+          # (which would wake the serverless database every two hours).
+          if [ ! -f required_vessels.txt ]; then
+            echo "required_vessels.txt is missing; run the Daily Vessel Position Sync workflow to create it." >&2
+            exit 1
+          fi
+          if [ ! -s required_vessels.txt ]; then
+            echo "No vessels currently require tracking; nothing to scrape."
+            exit 0
+          fi
+
           cp vessel_positions.csv /tmp/vessel_positions.before.csv
-          python sync_vessel_positions.py vessels > /tmp/required-vessels.txt
 
           fetch_failed=0
           while IFS= read -r vessel; do
@@ -51,9 +59,7 @@ jobs:
                 fetch_failed=1
               fi
             fi
-          done < /tmp/required-vessels.txt
-
-          python sync_vessel_positions.py post-new --before /tmp/vessel_positions.before.csv
+          done < required_vessels.txt
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
