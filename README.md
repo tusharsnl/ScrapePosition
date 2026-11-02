@@ -22,8 +22,13 @@ from the GitHub **Actions** tab. It makes no website or database calls. It:
    once and reporting any vessel that still fails.
 3. Commits the updated CSV using the repository's built-in Actions token.
 
-The `Daily Vessel Position Sync` workflow runs once a day at 02:30 UTC
-(08:00 IST), or manually from the **Actions** tab. It:
+The `Daily Vessel Position Sync` workflow is normally triggered by the
+`Daily CMA CGM tracking` workflow in OrangeTechShippingWeb once the carrier
+syncs finish (around 07:00 IST), so the auto-pausing database handles the
+carrier tracking and the vessel positions in a single wake-up window. A
+scheduled fallback at 04:30 UTC (10:00 IST) runs only if no chained run has
+synced in the previous 20 hours; otherwise it exits without contacting the
+website. It can also be run manually from the **Actions** tab. It:
 
 1. POSTs the CSV rows appended since the last successful sync to the website
    endpoint. The website inserts the positions into
