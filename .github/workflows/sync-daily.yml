@@ -2,7 +2,10 @@ name: Daily Vessel Position Sync
 
 on:
   schedule:
-    - cron: "30 4 * * *"  # 10:00 IST fallback; skipped if the chained run already synced
+    # 07:07 IST, alongside the Daily Hapag (01:07 UTC) and CMA CGM (01:23 UTC)
+    # tracking workflows in OrangeTechShippingWeb, so the auto-pausing
+    # serverless database handles all of them in one wake-up window.
+    - cron: "37 1 * * *"
   workflow_dispatch: {}
 
 # Only one sync at a time; it updates the vessel list cache and sync marker.
@@ -31,19 +34,6 @@ jobs:
           VESSEL_SYNC_API_URL: ${{ vars.VESSEL_SYNC_API_URL }}
           VESSEL_SYNC_API_KEY: ${{ secrets.VESSEL_SYNC_API_KEY }}
         run: |
-          # This workflow is normally dispatched by the Daily CMA CGM tracking
-          # workflow in OrangeTechShippingWeb right after the carrier syncs, so
-          # all database work happens in a single wake-up window. The schedule
-          # above is only a fallback: skip it when a chained run already
-          # synced recently, to avoid waking the database a second time.
-          if [ "${{ github.event_name }}" = "schedule" ] && [ -f last_synced_commit.txt ]; then
-            last_sync=$(git log -1 --format=%ct -- last_synced_commit.txt)
-            if [ -n "$last_sync" ] && [ $(( $(date +%s) - last_sync )) -lt 72000 ]; then
-              echo "Last sync was under 20 hours ago; skipping the scheduled fallback run."
-              exit 0
-            fi
-          fi
-
           # Rebuild the CSV as it was at the last successful sync. If the
           # marker is missing or unusable, post every row instead; that is
           # safe because the website skips positions it has already stored.
