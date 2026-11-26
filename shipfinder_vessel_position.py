@@ -146,8 +146,8 @@ def _parse_ais_table(raw_rows: list[str]) -> dict[str, str]:
     """
     parsed: dict[str, str] = {}
     for row in raw_rows:
-        cells = [c.strip() for c in row.split("\t") if c.strip()]
-        # cells look like ["MMSI：", "566942000", "Heading：", "121.0Deg"]
+        cells = [c.strip() for c in row.split("\t")]
+        # Keep blank values so a missing field does not shift later pairs.
         for i in range(0, len(cells) - 1, 2):
             label = cells[i].rstrip("：:").strip()
             value = cells[i + 1].strip()

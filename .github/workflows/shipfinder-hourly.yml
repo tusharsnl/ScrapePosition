@@ -3,7 +3,12 @@ name: Vessel Position Tracker
 on:
   schedule:
     - cron: "0 0 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      vessel:
+        description: "Optionally fetch only this vessel"
+        required: false
+        type: string
 
 # Avoid overlapping runs while the workflow updates the CSV.
 concurrency:
@@ -29,19 +34,30 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Test AIS table parsing
+        run: python -m unittest discover -s tests -v
+
       - name: Install Chromium (with OS dependencies)
         run: python -m playwright install --with-deps chromium
 
       - name: Fetch active vessel positions
+        env:
+          VESSEL_INPUT: ${{ inputs.vessel }}
         run: |
           # The vessel list is cached in the repository by the Daily Vessel
           # Position Sync workflow, so scrape runs never call the website API
           # (which would wake the serverless database every two hours).
-          if [ ! -f required_vessels.txt ]; then
+          vessel_file=required_vessels.txt
+          if [ -n "$VESSEL_INPUT" ]; then
+            vessel_file=/tmp/target_vessel.txt
+            printf '%s\n' "$VESSEL_INPUT" > "$vessel_file"
+            echo "Targeted fetch requested for: $VESSEL_INPUT"
+          fi
+          if [ ! -f "$vessel_file" ]; then
             echo "required_vessels.txt is missing; run the Daily Vessel Position Sync workflow to create it." >&2
             exit 1
           fi
-          if [ ! -s required_vessels.txt ]; then
+          if [ ! -s "$vessel_file" ]; then
             echo "No vessels currently require tracking; nothing to scrape."
             exit 0
           fi
@@ -59,7 +75,7 @@ jobs:
                 fetch_failed=1
               fi
             fi
-          done < required_vessels.txt
+          done < "$vessel_file"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
