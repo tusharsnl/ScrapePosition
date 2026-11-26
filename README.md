@@ -22,6 +22,10 @@ from the GitHub **Actions** tab. It makes no website or database calls. It:
    once and reporting any vessel that still fails.
 3. Commits the updated CSV using the repository's built-in Actions token.
 
+For a targeted manual run, enter a vessel name in the workflow's optional
+`vessel` input. The run fetches only that vessel; leave the input blank to use
+the cached `required_vessels.txt` list as usual.
+
 The `Daily Vessel Position Sync` workflow runs once a day at 01:37 UTC
 (07:07 IST), scheduled alongside the `Daily Hapag tracking` (01:07 UTC) and
 `Daily CMA CGM tracking` (01:23 UTC) workflows in OrangeTechShippingWeb so the
